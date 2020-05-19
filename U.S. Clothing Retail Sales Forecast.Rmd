@@ -1,0 +1,208 @@
+---
+title: "Time Series Project 2"
+author: "Ziping_Wei"
+date: "12/20/2019"
+output:
+  word_document: default
+  pdf_document: default
+---
+
+```{r}
+library(astsa) 
+library(tseries) 
+library(TSA) 
+library(forecast) 
+library(dplyr) 
+library(lubridate) 
+library(ggplot2)
+```
+
+1.load the data
+source: https://fred.stlouisfed.org/series/MRTSSM4481USN
+```{r}
+df_orginal = read.csv('cloth09.csv')
+#change the column names
+names(df_orginal) = c('Date','Sales')
+#get the value of sales
+df = ts(df_orginal$Sales,frequency = 12, start = c(2009,1))
+# train test split
+train_ratio = 0.8
+splitpoint = floor(length(df)*train_ratio)
+train = ts(df[1:splitpoint],frequency = 12, start = c(2009,1)) #2009.01.01-2017.08.01
+test = ts(df[(splitpoint+1):length(df)],frequency = 12, start = c(2017,9)) #2017.08.01-2009.10.01
+
+cat(' Total observations:',length(df),
+    '\n','Train Observations:',length(train),
+    '\n','Test Observations:',length(test),'\n')
+```
+
+2.Exploratory Data Analysis
+```{r}
+#plot the orginal sales
+plot.ts(train, xlab = "Year", ylab = "Sales (Millions of Dollars)", main = "U.S. Retail Sales: Clothing Stores") #non-stationary
+acf(train, lag.max = 48,main="ACF (orginal data)", xlab = "Lag (1 means 12 months)")
+pacf(train, lag.max = 48,main = "PACF (orginal data)",xlab = "Lag (1 means 12 months)")
+
+```
+From the plot, we could see that the data is not stationary with an obvious positive linear trend. In 2008, the retail sales shows a slight decline which may beacused of the recession. The ACF and PACF plot futher prove the nonstationarity of the data, with ACF decays very slowly. The ACF also indicates a seasonal pattern of the data, as the ACF spike at lage 12,24,36. To remove notstationarity, I first take one lag differencing.
+
+```{r}
+# ndiffs(train)
+# take difference: lag=1
+train_l1 = diff(train)
+plot.ts(train_l1, xlab = "Year", ylab = "U.S. Retail Sales: Clothing Stores (Millions of Dollars)", main = "Time Series Ordinary difference") 
+acf(train_l1, lag.max = 48,main="ACF Ordinary difference", xlab = "Lag")
+pacf(train_l1, lag.max = 48,main = "PACF Ordinary difference",xlab = "Lag")
+
+```
+After taking one lag difference, the time series plot has a constant mean around 0 and a more stable variance comparied to the orginal one. The ACF still fails to tail off at multiples of seasonal period 12, indicating a searsonal differencing of lag 12 needed to achieve stationarity.
+# ARIMA(0,1,1)，ARIMA(0,1,2)
+# ARIMA(4,1,1)，ARIMA(6,1,2)
+
+```{r}
+# take difference of train_l1: lag = 12
+train_l1.12 = diff(diff(train_l1, lag = 12))
+plot.ts(train_l1.12, xlab = "Year", ylab = "U.S. Retail Sales: Clothing Stores (Millions of Dollars)", main = "Differenced Time Series Ordinary and Seasonal Difference") 
+acf(train_l1.12, lag.max = 48,main="ACF Ordinary and Seasonal Difference", xlab = "Lag")
+pacf(train_l1.12, lag.max = 48,main = "PACF Ordinary and Seasonal Difference",xlab = "Lag")
+
+```
+
+Candidate models:
+
+# ARIMA(0,1,1)，ARIMA(0,1,2)
+# ARIMA(4,1,1)，ARIMA(6,1,2)
+
+ARIMA(0,1,1)x(0,1,1)[12]
+ARIMA(0,1,1)x(0,1,4)[12]
+ARIMA(0,1,2)x(0,1,1)[12]
+ARIMA(0,1,2)x(0,1,4)[12]
+
+Fit the model and compare the AIC and BIC scores
+```{r}
+
+SARIMA_models = function(ts,ps,ds,qs,PS,DS,QS,period){
+  for (p in ps){
+    for (q in qs){
+      for (Q in QS){
+        order = c(p,ds,q)
+        seasonal_order = c(PS,DS,Q)
+        model = arima(ts,order = order, 
+                      seasonal = list(order=seasonal_order,period = period)
+                      # method="CSS-ML",
+                      # optim.control = list(maxit = 500)
+                      )
+        print('====================================')
+        print(sprintf("SARIMA(%d,%d,%d)x(%d,%d,%d)[%d]",p,ds,q,PS,DS,Q,period))
+        print('====================================')
+        print(sprintf('AIC:%f',AIC(model)))
+        print(sprintf('BIC:%f',BIC(model)))    
+      }
+    }
+  }
+}
+```
+
+
+```{r}
+ps = c(0,4,6)
+qs = c(1,2)
+QS = c(1,4)
+SARIMA_models(train,ps,1,qs,0,1,QS,12)
+
+```
+
+Dignostic checking 
+AIC: SARIMA(4,1,1)x(0,1,1)[12]
+
+```{r}
+
+sarima(train,4,1,1,0,1,1,12)
+```
+BIC: SARIMA(0,1,1)x(0,1,1)[12]
+```{r}
+sarima(train,0,1,1,0,1,1,12)
+```
+
+```{r}
+arima.4.1.1.0.1.1 = arima(train, order=c(4,1,1),
+                          seasonal = list(order = c(0,1,1), period = 12))
+acf(arima.4.1.1.0.1.1$residuals, lag.max = 48, main = 'ACF of Residuals')
+pacf(arima.4.1.1.0.1.1$residuals, lag.max = 48, main = 'PACF of Residuals')
+
+```
+
+```{r}
+#011
+arima.0.1.1.0.1.1 = arima(train, order=c(0,1,1),
+                          seasonal = list(order = c(0,1,1), period = 12))
+acf(arima.0.1.1.0.1.1$residuals, lag.max = 48, main = 'ACF of Residuals')
+pacf(arima.0.1.1.0.1.1$residuals, lag.max = 48, main = 'PACF of Residuals')
+```
+
+```{r}
+yhat_test411 = predict(arima.4.1.1.0.1.1,n.ahead=length(test))
+yhat_test411_ts = ts(yhat_test411$pred,frequency = 12, start = c(2017,9)) 
+autoplot(df,series='Actual Sales') +
+  autolayer(yhat_test411_ts,series='Predicted Sales') +
+  labs(y='Sales (Millions of Dollars)', 
+       x='Year',
+       title = 'U.S. 2009-2019 Retail Sales: Clothing Stores',
+       subtitle = 'SARIMA(4,1,1)x(0,1,1)[12]'
+       )
+
+```
+
+```{r}
+yhat_test011 = predict(arima.0.1.1.0.1.1,n.ahead=length(test))
+yhat_test011_ts = ts(yhat_test011$pred,frequency = 12, start = c(2017,9)) 
+autoplot(df,series='Actual Sales') +
+  autolayer(yhat_test011_ts,series='Predicted Sales') +
+  labs(y='Sales (Millions of Dollars)', 
+       x='Year',
+       title = 'U.S. 2009-2019 Retail Sales: Clothing Stores',
+       subtitle = 'SARIMA(0,1,1)x(0,1,1)[12]'
+       )
+
+```
+```{r}
+accuracy(yhat_test411_ts,test)
+accuracy(yhat_test011_ts,test)
+```
+
+
+```{r}
+####### FINAL ONE#####
+# SARIMA(0,1,1)x(0,1,1)[12] trained on the whole dataset
+sarima_011 = arima(df, order=c(0,1,1),
+                          seasonal = list(order = c(0,1,1), period = 12))
+#predict following 1yrs sales
+pred_future011 = predict(sarima_011,n.ahead=1*12)
+pred_future011_ts = ts(pred_future011$pred,frequency = 12,start = c(2019,11))
+
+autoplot(df,series='Actual Sales') +
+  autolayer(pred_future011_ts,series='predicted sales') +
+  labs(y='Millions of dollars', 
+       x='Year',
+       title = 'U.S. 2020 Retail Sales Predication: Clothing Stores',
+       subtitle = 'SARIMA(0,1,1)x(0,1,1)[12]')
+
+```
+
+
+```{r}
+# SARIMA(4,1,1)x(0,1,1)[12] trained on the whole dataset
+sarima_411 = arima(train, order=c(4,1,1),
+                          seasonal = list(order = c(0,1,1), period = 12))
+#predict following 1yrs sales - 12months
+pred_future411 = predict(sarima_411,n.ahead=1*12)
+pred_future411_ts = ts(pred_future411$pred,frequency = 12,start = c(2019,10))
+
+autoplot(df,series='Actual Sales') +
+  autolayer(pred_future411_ts,series='predicted sales') +
+  labs(y='Millions of dollars', 
+       x='Year',
+       title = 'U.S. 2020 Retail Sales Predication: Clothing Stores',
+       subtitle = 'SARIMA(4,1,1)x(0,1,1)[12]')
+```
+
